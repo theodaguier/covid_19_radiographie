@@ -1,4 +1,4 @@
-COVID 19 RADIOGRAPHY
+COVID 19 RADIOGRAPHIE
 ==============================
 
 This repo is a Starting Pack for DS projects. You can rearrange the structure to make it fits your project.
