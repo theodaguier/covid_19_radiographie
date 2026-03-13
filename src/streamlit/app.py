@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
 from scipy import ndimage
-from skimage import io, feature
+from skimage import feature
 from pathlib import Path
 
 # ===== CONFIG =====
@@ -21,6 +21,7 @@ st.set_page_config(
 # ===== PATHS =====
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 MODELS_DIR = BASE_DIR / "models"
+REPORTS_DIR = BASE_DIR / "reports"
 DATA_DIR = BASE_DIR / "data" / "COVID-19_Radiography_Dataset"
 
 CLASSES = ['Normal', 'Lung_Opacity', 'COVID', 'Viral Pneumonia']
@@ -32,9 +33,8 @@ CLASS_COLORS = {
 }
 
 
-# ===== FEATURE EXTRACTION HOG (same as notebook cell 6) =====
+# ===== FEATURE EXTRACTION HOG =====
 def extract_hog_features(image: Image.Image) -> np.ndarray:
-    """Extrait les features HOG comme dans le notebook."""
     img = np.array(image.convert('L'), dtype=np.float64) / 255.0
     return feature.hog(img, pixels_per_cell=(16, 16), cells_per_block=(2, 2))
 
@@ -44,7 +44,6 @@ def extract_hog_features(image: Image.Image) -> np.ndarray:
 def load_models():
     models = {}
     label_mapping = None
-
     for f in MODELS_DIR.glob("*.pkl"):
         name = f.stem
         obj = joblib.load(f)
@@ -52,7 +51,6 @@ def load_models():
             label_mapping = obj
         else:
             models[name] = obj
-
     return models, label_mapping
 
 
@@ -65,53 +63,38 @@ def load_metrics():
     return None
 
 
-@st.cache_data
-def load_sample_images(n_per_class=3):
-    samples = {}
-    for cls in CLASSES:
-        img_dir = DATA_DIR / cls / "images"
-        if img_dir.exists():
-            imgs = sorted(img_dir.glob("*.png"))[:n_per_class]
-            samples[cls] = [str(p) for p in imgs]
-    return samples
-
-
-@st.cache_data
-def compute_class_features(n_per_class=50):
-    rows = []
-    for cls in CLASSES:
-        img_dir = DATA_DIR / cls / "images"
-        if not img_dir.exists():
-            continue
-        imgs = sorted(img_dir.glob("*.png"))[:n_per_class]
-        for p in imgs:
-            img = Image.open(p).convert('L')
-            arr = np.array(img, dtype=np.float32)
-            mean_int = arr.mean()
-            std_int = arr.std()
-            rows.append({
-                'label': cls,
-                'mean_intensity': mean_int,
-                'std_intensity': std_int,
-                'contrast': std_int / (mean_int + 1e-8),
-                'entropy': -np.sum((arr / 255) ** 2 * np.log((arr / 255) ** 2 + 1e-8)),
-                'gradient': ndimage.sobel(arr).std()
-            })
-    return pd.DataFrame(rows)
+def show_report_image(filename, caption=None, width=None):
+    """Affiche une image du dossier reports/ si elle existe."""
+    path = REPORTS_DIR / filename
+    if path.exists():
+        img = Image.open(path)
+        st.image(img, caption=caption, use_container_width=width is None, width=width)
+        return True
+    return False
 
 
 # ===== SIDEBAR =====
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
     "Aller a",
-    ["Presentation", "Exploration des donnees", "Visualisations", "Modelisation", "Prediction"]
+    [
+        "Presentation",
+        "Exploration des donnees",
+        "Preprocessing & Features",
+        "Modelisation Baseline",
+        "Optimisation & Metriques",
+        "Deep Learning & Boosting",
+        "Prediction"
+    ]
 )
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
     "**Projet** : Analyse de radiographies pulmonaires COVID-19\n\n"
     "**Formation** : DataScientest\n\n"
-    "**Dataset** : COVID-19 Radiography Database"
+    "**Dataset** : COVID-19 Radiography Database\n\n"
+    "**Images** : 21 165 radiographies thoraciques\n\n"
+    "**Classes** : Normal, COVID, Lung Opacity, Viral Pneumonia"
 )
 
 # ===== LOAD DATA =====
@@ -155,12 +138,23 @@ if page == "Presentation":
         col.metric(cls, f"{count:,}", f"{count/total*100:.1f}%")
 
     st.markdown("""
-    ## Pipeline
+    ## Pipeline du projet
 
-    1. **Exploration & DataViz** -- Analyse de la distribution, intensite, textures
-    2. **Feature engineering** -- Extraction de features HOG (Histogram of Oriented Gradients)
-    3. **Modelisation** -- Random Forest sur features HOG
-    4. **Prediction** -- Classification de nouvelles radiographies
+    | Etape | Notebook | Description |
+    |-------|----------|-------------|
+    | 1 | `01-exploration-dataviz` | Analyse exploratoire, distribution des classes, doublons |
+    | 2 | `02-preprocessing-feature-engineering` | Pretraitement (grayscale, resize 256x256, normalisation), 8 techniques de transformation |
+    | 3 | `03-modelisation-baseline` | Random Forest (50 arbres) et KNN sur images aplaties 64x64 |
+    | 4 | `04-optimisation-metriques` | Optimisation hyperparametres (RandomizedSearchCV), analyse des erreurs, courbes ROC |
+    | 5 | `05-deep-learning-boosting` | CNN (3 blocs Conv2D), Gradient Boosting sur features CNN, Grad-CAM |
+
+    ## Qualite des donnees
+
+    - Aucun doublon detecte
+    - Aucune image corrompue
+    - Aucun fichier manquant
+    - Format unique : PNG, niveaux de gris
+    - **Defi principal** : desequilibre des classes (COVID = classe minoritaire)
     """)
 
 
@@ -168,23 +162,21 @@ if page == "Presentation":
 elif page == "Exploration des donnees":
     st.title("Exploration des donnees")
 
+    st.markdown("### Distribution des classes")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        show_report_image("graphique_nombreimages_par_categorie.png",
+                          "Nombre d'images par categorie")
+    with col2:
+        show_report_image("Pourcentage d'images par catégorie.png",
+                          "Pourcentage par categorie")
+
     if metrics:
         counts = metrics['dataset_counts']
     else:
         counts = {'Normal': 10192, 'Lung_Opacity': 6012, 'COVID': 3616, 'Viral Pneumonia': 1345}
     total = sum(counts.values())
-
-    st.subheader("Distribution des classes")
-    fig, ax = plt.subplots(figsize=(8, 4))
-    colors = [CLASS_COLORS.get(c, '#95a5a6') for c in counts.keys()]
-    bars = ax.bar(counts.keys(), counts.values(), color=colors, edgecolor='white', linewidth=1.5)
-    for bar, count in zip(bars, counts.values()):
-        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 100,
-                f'{count}', ha='center', fontweight='bold')
-    ax.set_ylabel("Nombre d'images")
-    ax.set_title("Repartition des images par categorie")
-    ax.spines[['top', 'right']].set_visible(False)
-    st.pyplot(fig)
 
     st.markdown(f"""
     **Observations** :
@@ -193,84 +185,141 @@ elif page == "Exploration des donnees":
     - Viral Pneumonia est la classe minoritaire (**{counts.get('Viral Pneumonia',0)/total*100:.0f}%**)
     """)
 
-    st.subheader("Exemples d'images par classe")
-    samples = load_sample_images(n_per_class=3)
-    for cls in CLASSES:
-        st.markdown(f"**{cls}**")
-        if cls in samples:
-            cols = st.columns(3)
-            for i, img_path in enumerate(samples[cls]):
-                img = Image.open(img_path)
-                cols[i].image(img, use_container_width=True)
+    st.markdown("### COVID vs Autres categories")
+    show_report_image("COVID vs Autres catégories.png",
+                      "Comparaison COVID vs autres classes")
+
+    st.markdown("### Verification des doublons et formats")
+    col1, col2 = st.columns(2)
+    with col1:
+        show_report_image("Présence de doublons dans les images.png",
+                          "Aucun doublon detecte")
+    with col2:
+        show_report_image("Distribution des images par catégorie et format.png",
+                          "Toutes les images sont au format PNG")
+
+    st.markdown("### Exemples d'images par classe")
+    show_report_image("Exemple d'image pour chaque catégorie.png",
+                      "Echantillons representatifs de chaque categorie")
 
 
-# ----- PAGE 3 : VISUALISATIONS -----
-elif page == "Visualisations":
-    st.title("Visualisations des features")
+# ----- PAGE 3 : PREPROCESSING & FEATURES -----
+elif page == "Preprocessing & Features":
+    st.title("Preprocessing & Feature Engineering")
 
-    with st.spinner("Calcul des features sur un echantillon..."):
-        df_feat = compute_class_features(n_per_class=50)
-
-    features = ['mean_intensity', 'std_intensity', 'contrast', 'entropy', 'gradient']
-    feature_labels = {
-        'mean_intensity': 'Intensite moyenne',
-        'std_intensity': 'Ecart-type intensite',
-        'contrast': 'Contraste normalise',
-        'entropy': 'Entropie',
-        'gradient': 'Gradient (Sobel)'
-    }
-
-    st.subheader("Distribution des features par classe")
-    fig, axes = plt.subplots(1, 5, figsize=(20, 4))
-    for ax, feat in zip(axes, features):
-        palette = [CLASS_COLORS[c] for c in CLASSES]
-        sns.boxplot(data=df_feat, x='label', y=feat, ax=ax, palette=palette, order=CLASSES)
-        ax.set_title(feature_labels[feat], fontsize=10)
-        ax.set_xlabel("")
-        ax.tick_params(axis='x', rotation=45)
-    plt.tight_layout()
-    st.pyplot(fig)
-
-    st.subheader("Intensite moyenne vs Ecart-type")
-    fig, ax = plt.subplots(figsize=(8, 5))
-    for cls in CLASSES:
-        subset = df_feat[df_feat['label'] == cls]
-        ax.scatter(subset['mean_intensity'], subset['std_intensity'],
-                   c=CLASS_COLORS[cls], label=cls, alpha=0.7, s=40)
-    ax.set_xlabel("Intensite moyenne")
-    ax.set_ylabel("Ecart-type")
-    ax.legend()
-    ax.spines[['top', 'right']].set_visible(False)
-    st.pyplot(fig)
-
-    st.subheader("Matrice de correlation")
-    fig, ax = plt.subplots(figsize=(6, 5))
-    corr = df_feat[features].corr()
-    sns.heatmap(corr, annot=True, fmt='.2f', cmap='RdBu_r', center=0,
-                xticklabels=[feature_labels[f] for f in features],
-                yticklabels=[feature_labels[f] for f in features], ax=ax)
-    ax.set_title("Correlations entre features")
-    plt.tight_layout()
-    st.pyplot(fig)
-
-
-# ----- PAGE 4 : MODELISATION -----
-elif page == "Modelisation":
-    st.title("Modelisation")
-
-    models, label_mapping = load_models()
-
-    st.subheader("Approche")
     st.markdown("""
-    **Features HOG (Histogram of Oriented Gradients)** extraites de chaque radiographie :
-    - Capture les **contours et textures** de l'image
-    - Parametres : `pixels_per_cell=(16,16)`, `cells_per_block=(2,2)`
-    - Beaucoup plus discriminant que de simples statistiques d'intensite
+    ## Pipeline de pretraitement
 
-    **Modele** : Random Forest (100 arbres) entraine sur les features HOG
+    1. **Conversion en niveaux de gris** -- Standardisation du format
+    2. **Redimensionnement 256x256** -- Taille uniforme pour tous les modeles
+    3. **Normalisation [0, 1]** -- Division des pixels par 255
+
+    ## Techniques de transformation
+
+    8 techniques appliquees pour enrichir l'analyse et extraire des features visuelles :
     """)
 
-    st.subheader("Resultats")
+    st.markdown("### Exemples d'images pretraitees")
+    cols = st.columns(5)
+    for i, col in enumerate(cols):
+        with col:
+            show_report_image(f"image_pretraitee_{i}.png", f"Image {i+1}")
+
+    st.markdown("### Transformations appliquees")
+    col1, col2 = st.columns(2)
+    with col1:
+        show_report_image("image_gaussian_blur_0.png", "Gaussian Blur -- Reduction du bruit")
+        show_report_image("image_canny_0.png", "Canny -- Detection de contours")
+        show_report_image("image_erosion_0.png", "Erosion -- Reduction des zones claires")
+    with col2:
+        show_report_image("image_sobel_0.png", "Sobel -- Extraction des gradients")
+        show_report_image("image_laplacian_0.png", "Laplacien -- Details fins et contours")
+
+    st.markdown("### Comparaison globale des transformations")
+    show_report_image("Comparaison_preprocessing_features.png",
+                      "Vue d'ensemble de toutes les techniques de preprocessing")
+
+    st.markdown("### Analyse statistique des intensites")
+    col1, col2 = st.columns(2)
+    with col1:
+        show_report_image("hist_moyennes.png", "Distribution des intensites moyennes")
+    with col2:
+        show_report_image("hist_ecarts_type.png", "Distribution des ecarts-type")
+
+    show_report_image("comparaison_covid_normal.png",
+                      "Comparaison des distributions COVID vs Normal")
+
+    st.markdown("""
+    **Observations** :
+    - Les images COVID presentent generalement une intensite moyenne plus elevee
+    - La variance est plus grande pour les cas pathologiques
+    - Les filtres de contour (Canny, Sobel) revelent des structures differentes selon la pathologie
+    """)
+
+
+# ----- PAGE 4 : MODELISATION BASELINE -----
+elif page == "Modelisation Baseline":
+    st.title("Modelisation Baseline")
+
+    st.markdown("""
+    ## Approche
+
+    - Images redimensionnees en **64x64** puis aplaties en vecteurs de **4 096 features**
+    - Split train/test : **80/20** stratifie
+    - Encodage des labels : COVID(0), Lung_Opacity(1), Normal(2), Viral_Pneumonia(3)
+
+    ## Modeles entraines
+    """)
+
+    st.markdown("### 1. Random Forest (50 arbres)")
+    st.markdown("""
+    - **Accuracy** : 82%
+    - **F1-score macro** : 0.81
+    - Meilleur recall : Normal (0.92)
+    - Plus faible recall : COVID (0.69) -- marge d'amelioration
+    """)
+    show_report_image("matrice_confusion2_RF.png", "Matrice de confusion -- Random Forest")
+
+    st.markdown("---")
+
+    st.markdown("### 2. K-Nearest Neighbors (KNN)")
+    st.markdown("""
+    - **k = 5** voisins, poids par distance, metrique euclidienne
+    - Performance inferieure au Random Forest sur ces images
+    - Sensible a la haute dimensionnalite (4 096 features)
+    """)
+    show_report_image("matrice_confusion_KNN.png", "Matrice de confusion -- KNN")
+
+    st.markdown("""
+    ---
+    ### Bilan baseline
+
+    | Modele | Accuracy | F1-macro | Point faible |
+    |--------|----------|----------|------------|
+    | Random Forest (50) | 82% | 0.81 | Recall COVID = 0.69 |
+    | KNN (k=5) | < RF | < RF | Haute dimensionnalite |
+
+    Le **Random Forest** est clairement superieur. L'etape suivante consiste a optimiser ses hyperparametres.
+    """)
+
+
+# ----- PAGE 5 : OPTIMISATION & METRIQUES -----
+elif page == "Optimisation & Metriques":
+    st.title("Optimisation & Metriques")
+
+    models_loaded, label_mapping = load_models()
+
+    st.markdown("""
+    ## Optimisation par RandomizedSearchCV
+
+    Recherche des meilleurs hyperparametres du Random Forest :
+    - **n_estimators** : 150 (optimal)
+    - **max_depth** : None (pas de limite)
+    - **min_samples_split** : 2
+    - **min_samples_leaf** : 1
+    """)
+
+    st.markdown("### Resultats du modele optimise")
 
     if metrics:
         comp = metrics['comparaison']
@@ -318,20 +367,94 @@ elif page == "Modelisation":
         if report_rows:
             st.dataframe(pd.DataFrame(report_rows).set_index('Classe'))
 
-        # Hyperparametres
+        st.markdown("""
+        **Analyse des resultats** :
+        - **Viral Pneumonia** : excellente precision (0.91) et recall (0.96) -- classe bien distincte
+        - **COVID** : recall plus faible (0.73) -- confusion avec Lung Opacity
+        - **Normal vs Lung Opacity** : performances similaires, confusion frequente entre ces classes
+        """)
+
         if 'hog_params' in metrics:
             st.subheader("Parametres HOG")
             for k, v in metrics['hog_params'].items():
                 st.markdown(f"- `{k}` = `{v}`")
     else:
-        st.warning("Fichier metrics.json non trouve. Executez le notebook pour generer les metriques.")
-
-    st.subheader("Modeles disponibles")
-    for name in sorted(models.keys()):
-        st.write(f"- `{name}`")
+        st.warning("Fichier metrics.json non trouve. Executez les notebooks pour generer les metriques.")
 
 
-# ----- PAGE 5 : PREDICTION -----
+# ----- PAGE 6 : DEEP LEARNING & BOOSTING -----
+elif page == "Deep Learning & Boosting":
+    st.title("Deep Learning & Boosting")
+
+    st.markdown("""
+    ## Architecture CNN
+
+    Reseau convolutif entraine sur les images redimensionnees en **128x128** :
+
+    | Couche | Details |
+    |--------|---------|
+    | Conv2D Block 1 | 32 filtres, BatchNorm, MaxPool 2x2 |
+    | Conv2D Block 2 | 64 filtres, BatchNorm, MaxPool 2x2 |
+    | Conv2D Block 3 | 128 filtres, BatchNorm, MaxPool 2x2 |
+    | GlobalAveragePooling2D | Reduction spatiale |
+    | Dense | 128 unites, Dropout 0.5 |
+    | Sortie | Softmax, 4 classes |
+
+    **Entrainement** :
+    - Optimizer : Adam (lr = 1e-4)
+    - Loss : Categorical Crossentropy
+    - Epochs : 40 (Early Stopping patience=6)
+    - Poids de classes equilibres pour gerer le desequilibre
+    """)
+
+    st.markdown("### Courbes d'entrainement")
+    show_report_image("loss_accuracy_curves.png",
+                      "Evolution du loss et de l'accuracy (train vs validation)")
+
+    st.markdown("### Matrice de confusion CNN")
+    show_report_image("confusion_cnn.png", "Confusion matrix -- CNN")
+
+    st.markdown("---")
+
+    st.markdown("""
+    ## Gradient Boosting sur features CNN
+
+    Approche hybride : extraction des features de la couche **GlobalAveragePooling2D** du CNN,
+    puis classification par **Gradient Boosting** (300 estimateurs).
+
+    Cette methode combine la puissance d'extraction de features du deep learning
+    avec la robustesse des methodes d'ensemble.
+    """)
+
+    show_report_image("confusion_boosting.png", "Confusion matrix -- Gradient Boosting sur features CNN")
+
+    st.markdown("---")
+
+    st.markdown("""
+    ## Interpretabilite : Grad-CAM
+
+    **Grad-CAM** (Gradient Class Activation Map) permet de visualiser les regions
+    de l'image sur lesquelles le CNN se concentre pour prendre sa decision.
+
+    Ces cartes de chaleur sont essentielles pour la **confiance medicale** :
+    elles montrent si le modele regarde les bonnes zones (poumons) ou s'il se base
+    sur des artefacts.
+    """)
+
+    cols = st.columns(3)
+    for i, col in enumerate(cols):
+        with col:
+            show_report_image(f"gradcam_{i}.png", f"Grad-CAM exemple {i+1}")
+
+    st.markdown("""
+    **Interpretation** :
+    - Les zones rouges/jaunes indiquent les regions les plus influentes pour la prediction
+    - Un bon modele doit se concentrer sur les **zones pulmonaires**
+    - Les artefacts externes (bords, texte) ne doivent pas influencer la decision
+    """)
+
+
+# ----- PAGE 7 : PREDICTION -----
 elif page == "Prediction":
     st.title("Prediction sur une radiographie")
 
@@ -341,9 +464,7 @@ elif page == "Prediction":
         st.error("Aucun modele trouve dans le dossier models/. Executez d'abord les notebooks.")
         st.stop()
 
-    # Inverse label mapping (label_mapping_hog is {int: str})
     if label_mapping:
-        # label_mapping_hog format: {0: 'COVID', 1: 'Lung_Opacity', ...}
         if isinstance(list(label_mapping.keys())[0], int):
             inv_mapping = label_mapping
         else:
@@ -351,7 +472,6 @@ elif page == "Prediction":
     else:
         inv_mapping = {0: 'COVID', 1: 'Lung_Opacity', 2: 'Normal', 3: 'Viral Pneumonia'}
 
-    # Model selection
     model_name = st.selectbox("Choisir le modele", sorted(models.keys()))
     model = models[model_name]
 
@@ -380,7 +500,6 @@ elif page == "Prediction":
             predict_image = image
             st.info(f"Vraie classe : **{st.session_state['random_cls']}**")
 
-    # Prediction
     if 'predict_image' in dir():
         col1, col2 = st.columns([1, 2])
 
@@ -388,11 +507,9 @@ elif page == "Prediction":
             st.image(predict_image, caption="Radiographie", use_container_width=True)
 
         with col2:
-            # Extract HOG features
             hog_features = extract_hog_features(predict_image)
             X_pred = hog_features.reshape(1, -1)
 
-            # Predict
             prediction = model.predict(X_pred)[0]
             predicted_class = inv_mapping.get(prediction, str(prediction))
 
