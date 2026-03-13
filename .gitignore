@@ -161,3 +161,9 @@ cython_debug/
 
 # VSCode configuration files
 .vscode/
+
+# Large data files
+data/COVID-19_Radiography_Dataset.zip
+data/COVID-19_Radiography_Dataset/
+*.pkl
+.DS_Store
