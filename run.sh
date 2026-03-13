@@ -1,4 +1,4 @@
 #!/bin/bash
 cd "$(dirname "$0")"
-pip install -q -r requirements.txt
-streamlit run src/streamlit/app.py
+/opt/miniconda3/bin/pip install -q -r requirements.txt
+/opt/miniconda3/bin/streamlit run src/streamlit/app.py

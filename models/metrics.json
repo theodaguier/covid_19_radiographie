@@ -1,0 +1,65 @@
+{
+  "comparaison": {
+    "RF HOG": {
+      "accuracy": 0.788,
+      "f1_macro": 0.799
+    }
+  },
+  "best_model_report": {
+    "COVID": {
+      "precision": 0.776595744680851,
+      "recall": 0.73,
+      "f1-score": 0.7525773195876289,
+      "support": 400.0
+    },
+    "Lung_Opacity": {
+      "precision": 0.7518427518427518,
+      "recall": 0.765,
+      "f1-score": 0.758364312267658,
+      "support": 400.0
+    },
+    "Normal": {
+      "precision": 0.745049504950495,
+      "recall": 0.7525,
+      "f1-score": 0.7487562189054726,
+      "support": 400.0
+    },
+    "Viral Pneumonia": {
+      "precision": 0.9148936170212766,
+      "recall": 0.9591078066914498,
+      "f1-score": 0.9364791288566243,
+      "support": 269.0
+    },
+    "accuracy": 0.7876106194690266,
+    "macro avg": {
+      "precision": 0.7970954046238435,
+      "recall": 0.8016519516728624,
+      "f1-score": 0.799044244904346,
+      "support": 1469.0
+    },
+    "weighted avg": {
+      "precision": 0.7865905946687287,
+      "recall": 0.7876106194690266,
+      "f1-score": 0.786788309031134,
+      "support": 1469.0
+    }
+  },
+  "best_model_name": "RF HOG",
+  "feature_type": "hog",
+  "hog_params": {
+    "pixels_per_cell": [
+      16,
+      16
+    ],
+    "cells_per_block": [
+      2,
+      2
+    ]
+  },
+  "dataset_counts": {
+    "Lung_Opacity": 2000,
+    "Normal": 2000,
+    "COVID": 2000,
+    "Viral Pneumonia": 1345
+  }
+}

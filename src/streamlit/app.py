@@ -2,13 +2,13 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import joblib
+import json
 import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
 from scipy import ndimage
-from sklearn.metrics import confusion_matrix, classification_report
+from skimage import io, feature
 from pathlib import Path
-import os
 
 # ===== CONFIG =====
 st.set_page_config(
@@ -32,28 +32,14 @@ CLASS_COLORS = {
 }
 
 
-# ===== FEATURE EXTRACTION (same as notebook) =====
-def extract_features(image: Image.Image) -> pd.DataFrame:
-    """Extrait les 5 features utilisées par le modèle."""
-    img = image.convert('L')
-    arr = np.array(img, dtype=np.float32)
-
-    mean_int = arr.mean()
-    std_int = arr.std()
-    contrast = std_int / (mean_int + 1e-8)
-    entropy = -np.sum((arr / 255) ** 2 * np.log((arr / 255) ** 2 + 1e-8))
-    gradient = ndimage.sobel(arr).std()
-
-    return pd.DataFrame([{
-        'mean_intensity': mean_int,
-        'std_intensity': std_int,
-        'contrast': contrast,
-        'entropy': entropy,
-        'gradient': gradient
-    }])
+# ===== FEATURE EXTRACTION HOG (same as notebook cell 6) =====
+def extract_hog_features(image: Image.Image) -> np.ndarray:
+    """Extrait les features HOG comme dans le notebook."""
+    img = np.array(image.convert('L'), dtype=np.float64) / 255.0
+    return feature.hog(img, pixels_per_cell=(16, 16), cells_per_block=(2, 2))
 
 
-# ===== LOAD MODELS =====
+# ===== LOAD MODELS & METRICS =====
 @st.cache_resource
 def load_models():
     models = {}
@@ -62,7 +48,7 @@ def load_models():
     for f in MODELS_DIR.glob("*.pkl"):
         name = f.stem
         obj = joblib.load(f)
-        if name == 'label_mapping':
+        if 'label_mapping' in name:
             label_mapping = obj
         else:
             models[name] = obj
@@ -71,16 +57,16 @@ def load_models():
 
 
 @st.cache_data
-def load_dataset_stats():
-    """Charge les stats du dataset."""
-    counts = {'Normal': 10192, 'Lung_Opacity': 6012, 'COVID': 3616, 'Viral Pneumonia': 1345}
-    total = sum(counts.values())
-    return counts, total
+def load_metrics():
+    metrics_path = MODELS_DIR / "metrics.json"
+    if metrics_path.exists():
+        with open(metrics_path) as f:
+            return json.load(f)
+    return None
 
 
 @st.cache_data
 def load_sample_images(n_per_class=3):
-    """Charge quelques images exemples par classe."""
     samples = {}
     for cls in CLASSES:
         img_dir = DATA_DIR / cls / "images"
@@ -92,7 +78,6 @@ def load_sample_images(n_per_class=3):
 
 @st.cache_data
 def compute_class_features(n_per_class=50):
-    """Calcule les features sur un échantillon pour les visualisations."""
     rows = []
     for cls in CLASSES:
         img_dir = DATA_DIR / cls / "images"
@@ -118,8 +103,8 @@ def compute_class_features(n_per_class=50):
 # ===== SIDEBAR =====
 st.sidebar.title("Navigation")
 page = st.sidebar.radio(
-    "Aller à",
-    ["Présentation", "Exploration des données", "Visualisations", "Modélisation", "Prédiction"]
+    "Aller a",
+    ["Presentation", "Exploration des donnees", "Visualisations", "Modelisation", "Prediction"]
 )
 
 st.sidebar.markdown("---")
@@ -129,34 +114,42 @@ st.sidebar.markdown(
     "**Dataset** : COVID-19 Radiography Database"
 )
 
+# ===== LOAD DATA =====
+metrics = load_metrics()
+
 # ===== PAGES =====
 
-# ----- PAGE 1 : PRÉSENTATION -----
-if page == "Présentation":
+# ----- PAGE 1 : PRESENTATION -----
+if page == "Presentation":
     st.title("Analyse de radiographies pulmonaires COVID-19")
 
     st.markdown("""
     ## Contexte
 
-    La pandémie de COVID-19 a mis en lumière le besoin d'outils de **diagnostic rapide et fiable**.
+    La pandemie de COVID-19 a mis en lumiere le besoin d'outils de **diagnostic rapide et fiable**.
     L'analyse automatique de **radiographies thoraciques** par Machine Learning permet d'assister
-    les professionnels de santé dans la détection de pathologies pulmonaires.
+    les professionnels de sante dans la detection de pathologies pulmonaires.
 
     ## Objectif
 
-    Développer un modèle de classification capable de distinguer **4 types de radiographies** :
+    Developper un modele de classification capable de distinguer **4 types de radiographies** :
 
-    - **Normal** — Poumons sains
-    - **COVID** — Infection COVID-19
-    - **Lung Opacity** — Opacité pulmonaire (pneumonie bactérienne, etc.)
-    - **Viral Pneumonia** — Pneumonie virale (non-COVID)
+    - **Normal** -- Poumons sains
+    - **COVID** -- Infection COVID-19
+    - **Lung Opacity** -- Opacite pulmonaire (pneumonie bacterienne, etc.)
+    - **Viral Pneumonia** -- Pneumonie virale (non-COVID)
 
     ## Dataset
-
-    Le **COVID-19 Radiography Dataset** contient **21 165 images** réparties en 4 classes.
     """)
 
-    counts, total = load_dataset_stats()
+    if metrics:
+        counts = metrics['dataset_counts']
+    else:
+        counts = {'Normal': 10192, 'Lung_Opacity': 6012, 'COVID': 3616, 'Viral Pneumonia': 1345}
+
+    total = sum(counts.values())
+    st.markdown(f"Le **COVID-19 Radiography Dataset** contient **{total:,} images** reparties en 4 classes.")
+
     col1, col2, col3, col4 = st.columns(4)
     for col, (cls, count) in zip([col1, col2, col3, col4], counts.items()):
         col.metric(cls, f"{count:,}", f"{count/total*100:.1f}%")
@@ -164,36 +157,40 @@ if page == "Présentation":
     st.markdown("""
     ## Pipeline
 
-    1. **Exploration & DataViz** — Analyse de la distribution, intensité, textures
-    2. **Preprocessing** — Extraction de 5 features (intensité, contraste, entropie, gradient)
-    3. **Modélisation** — Random Forest, Gradient Boosting, comparaison de 6 modèles
-    4. **Optimisation** — RandomizedSearchCV sur les 2 meilleurs modèles
+    1. **Exploration & DataViz** -- Analyse de la distribution, intensite, textures
+    2. **Feature engineering** -- Extraction de features HOG (Histogram of Oriented Gradients)
+    3. **Modelisation** -- Random Forest sur features HOG
+    4. **Prediction** -- Classification de nouvelles radiographies
     """)
 
 
 # ----- PAGE 2 : EXPLORATION -----
-elif page == "Exploration des données":
-    st.title("Exploration des données")
+elif page == "Exploration des donnees":
+    st.title("Exploration des donnees")
 
-    counts, total = load_dataset_stats()
+    if metrics:
+        counts = metrics['dataset_counts']
+    else:
+        counts = {'Normal': 10192, 'Lung_Opacity': 6012, 'COVID': 3616, 'Viral Pneumonia': 1345}
+    total = sum(counts.values())
 
     st.subheader("Distribution des classes")
     fig, ax = plt.subplots(figsize=(8, 4))
-    colors = [CLASS_COLORS[c] for c in counts.keys()]
+    colors = [CLASS_COLORS.get(c, '#95a5a6') for c in counts.keys()]
     bars = ax.bar(counts.keys(), counts.values(), color=colors, edgecolor='white', linewidth=1.5)
     for bar, count in zip(bars, counts.values()):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 100,
                 f'{count}', ha='center', fontweight='bold')
     ax.set_ylabel("Nombre d'images")
-    ax.set_title("Répartition des images par catégorie")
+    ax.set_title("Repartition des images par categorie")
     ax.spines[['top', 'right']].set_visible(False)
     st.pyplot(fig)
 
     st.markdown(f"""
     **Observations** :
-    - Le dataset est **déséquilibré** : Normal ({counts['Normal']/total*100:.0f}%) domine largement
-    - COVID ne représente que **{counts['COVID']/total*100:.0f}%** des images
-    - Viral Pneumonia est la classe minoritaire (**{counts['Viral Pneumonia']/total*100:.0f}%**)
+    - Le dataset est **desequilibre** : Normal ({counts.get('Normal',0)/total*100:.0f}%) domine largement
+    - COVID ne represente que **{counts.get('COVID',0)/total*100:.0f}%** des images
+    - Viral Pneumonia est la classe minoritaire (**{counts.get('Viral Pneumonia',0)/total*100:.0f}%**)
     """)
 
     st.subheader("Exemples d'images par classe")
@@ -211,19 +208,18 @@ elif page == "Exploration des données":
 elif page == "Visualisations":
     st.title("Visualisations des features")
 
-    with st.spinner("Calcul des features sur un échantillon..."):
+    with st.spinner("Calcul des features sur un echantillon..."):
         df_feat = compute_class_features(n_per_class=50)
 
     features = ['mean_intensity', 'std_intensity', 'contrast', 'entropy', 'gradient']
     feature_labels = {
-        'mean_intensity': 'Intensité moyenne',
-        'std_intensity': 'Écart-type intensité',
-        'contrast': 'Contraste normalisé',
+        'mean_intensity': 'Intensite moyenne',
+        'std_intensity': 'Ecart-type intensite',
+        'contrast': 'Contraste normalise',
         'entropy': 'Entropie',
         'gradient': 'Gradient (Sobel)'
     }
 
-    # Boxplots
     st.subheader("Distribution des features par classe")
     fig, axes = plt.subplots(1, 5, figsize=(20, 4))
     for ax, feat in zip(axes, features):
@@ -235,135 +231,132 @@ elif page == "Visualisations":
     plt.tight_layout()
     st.pyplot(fig)
 
-    # Scatter
-    st.subheader("Intensité moyenne vs Écart-type")
+    st.subheader("Intensite moyenne vs Ecart-type")
     fig, ax = plt.subplots(figsize=(8, 5))
     for cls in CLASSES:
         subset = df_feat[df_feat['label'] == cls]
         ax.scatter(subset['mean_intensity'], subset['std_intensity'],
                    c=CLASS_COLORS[cls], label=cls, alpha=0.7, s=40)
-    ax.set_xlabel("Intensité moyenne")
-    ax.set_ylabel("Écart-type")
+    ax.set_xlabel("Intensite moyenne")
+    ax.set_ylabel("Ecart-type")
     ax.legend()
     ax.spines[['top', 'right']].set_visible(False)
     st.pyplot(fig)
 
-    # Correlation matrix
-    st.subheader("Matrice de corrélation")
+    st.subheader("Matrice de correlation")
     fig, ax = plt.subplots(figsize=(6, 5))
     corr = df_feat[features].corr()
     sns.heatmap(corr, annot=True, fmt='.2f', cmap='RdBu_r', center=0,
                 xticklabels=[feature_labels[f] for f in features],
                 yticklabels=[feature_labels[f] for f in features], ax=ax)
-    ax.set_title("Corrélations entre features")
+    ax.set_title("Correlations entre features")
     plt.tight_layout()
     st.pyplot(fig)
 
 
-# ----- PAGE 4 : MODÉLISATION -----
-elif page == "Modélisation":
-    st.title("Modélisation")
+# ----- PAGE 4 : MODELISATION -----
+elif page == "Modelisation":
+    st.title("Modelisation")
 
     models, label_mapping = load_models()
 
     st.subheader("Approche")
     st.markdown("""
-    **5 features extraites** de chaque radiographie :
-    - `mean_intensity` — intensité moyenne des pixels
-    - `std_intensity` — écart-type (contraste brut)
-    - `contrast` — contraste normalisé
-    - `entropy` — complexité de texture
-    - `gradient` — intensité des contours (Sobel)
+    **Features HOG (Histogram of Oriented Gradients)** extraites de chaque radiographie :
+    - Capture les **contours et textures** de l'image
+    - Parametres : `pixels_per_cell=(16,16)`, `cells_per_block=(2,2)`
+    - Beaucoup plus discriminant que de simples statistiques d'intensite
 
-    **Modèles entraînés et comparés** :
-    | Modèle | Description |
-    |--------|-------------|
-    | Logistic Regression | Baseline linéaire |
-    | KNN | K plus proches voisins |
-    | SVM (RBF) | Support Vector Machine |
-    | Decision Tree | Arbre de décision |
-    | Random Forest | Ensemble d'arbres (bagging) |
-    | Gradient Boosting | Ensemble d'arbres (boosting) |
+    **Modele** : Random Forest (100 arbres) entraine sur les features HOG
     """)
 
-    st.subheader("Résultats comparatifs")
+    st.subheader("Resultats")
 
-    results = pd.DataFrame({
-        'Modèle': ['RF Baseline', 'RF Optimisé', 'GB Optimisé'],
-        'Accuracy': [0.500, 0.543, 0.521],
-        'F1-macro': [0.495, 0.526, 0.516]
-    })
-    results = results.set_index('Modèle')
+    if metrics:
+        comp = metrics['comparaison']
+        results = pd.DataFrame({
+            'Modele': list(comp.keys()),
+            'Accuracy': [v['accuracy'] for v in comp.values()],
+            'F1-macro': [v['f1_macro'] for v in comp.values()]
+        })
+        results = results.set_index('Modele')
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.dataframe(results.style.highlight_max(axis=0, color='#2ecc71'))
+        col1, col2 = st.columns(2)
+        with col1:
+            st.dataframe(results.style.highlight_max(axis=0, color='#2ecc71'))
 
-    with col2:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        x = np.arange(len(results))
-        width = 0.35
-        ax.bar(x - width / 2, results['Accuracy'], width, label='Accuracy', color='#3498db')
-        ax.bar(x + width / 2, results['F1-macro'], width, label='F1-macro', color='#e74c3c')
-        ax.set_xticks(x)
-        ax.set_xticklabels(results.index, rotation=15)
-        ax.set_ylim(0, 1)
-        ax.legend()
-        ax.set_title("Comparaison des modèles")
-        ax.spines[['top', 'right']].set_visible(False)
-        st.pyplot(fig)
+        with col2:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            x = np.arange(len(results))
+            width = 0.35
+            ax.bar(x - width / 2, results['Accuracy'], width, label='Accuracy', color='#3498db')
+            ax.bar(x + width / 2, results['F1-macro'], width, label='F1-macro', color='#e74c3c')
+            ax.set_xticks(x)
+            ax.set_xticklabels(results.index, rotation=15)
+            ax.set_ylim(0, 1)
+            ax.legend()
+            ax.set_title("Performance du modele")
+            ax.spines[['top', 'right']].set_visible(False)
+            st.pyplot(fig)
 
-    st.subheader("Meilleur modèle : Random Forest Optimisé")
-    st.markdown("""
-    **Hyperparamètres optimisés** via `RandomizedSearchCV` (40 itérations, 5-fold CV) :
-    - `n_estimators`, `max_depth`, `min_samples_split`, `min_samples_leaf`, `max_features`
+        report = metrics.get('best_model_report', {})
+        best_name = metrics.get('best_model_name', '')
 
-    **Performance sur le test set** :
-    """)
+        st.subheader(f"Rapport de classification : {best_name}")
 
-    report_data = {
-        'Classe': ['Normal', 'Lung_Opacity', 'COVID', 'Viral Pneumonia'],
-        'Precision': [0.53, 0.50, 0.62, 0.47],
-        'Recall': [0.64, 0.40, 0.72, 0.37],
-        'F1-score': [0.58, 0.44, 0.67, 0.41]
-    }
-    st.dataframe(pd.DataFrame(report_data).set_index('Classe'))
+        report_rows = []
+        for cls in CLASSES:
+            if cls in report:
+                r = report[cls]
+                report_rows.append({
+                    'Classe': cls,
+                    'Precision': round(r['precision'], 2),
+                    'Recall': round(r['recall'], 2),
+                    'F1-score': round(r['f1-score'], 2),
+                    'Support': int(r['support'])
+                })
+        if report_rows:
+            st.dataframe(pd.DataFrame(report_rows).set_index('Classe'))
 
-    st.markdown("""
-    **Observations** :
-    - Le COVID est la classe **la mieux détectée** (F1 = 0.67) grâce à des patterns radiographiques distincts
-    - Lung Opacity et Viral Pneumonia sont souvent confondus (aspects radiologiques similaires)
-    - Les 5 features d'intensité/texture capturent des informations utiles mais limitées
-    """)
+        # Hyperparametres
+        if 'hog_params' in metrics:
+            st.subheader("Parametres HOG")
+            for k, v in metrics['hog_params'].items():
+                st.markdown(f"- `{k}` = `{v}`")
+    else:
+        st.warning("Fichier metrics.json non trouve. Executez le notebook pour generer les metriques.")
 
-    st.subheader("Modèles disponibles")
+    st.subheader("Modeles disponibles")
     for name in sorted(models.keys()):
         st.write(f"- `{name}`")
 
 
-# ----- PAGE 5 : PRÉDICTION -----
-elif page == "Prédiction":
+# ----- PAGE 5 : PREDICTION -----
+elif page == "Prediction":
     st.title("Prediction sur une radiographie")
 
     models, label_mapping = load_models()
 
     if not models:
-        st.error("Aucun modèle trouvé dans le dossier models/. Exécutez d'abord les notebooks.")
+        st.error("Aucun modele trouve dans le dossier models/. Executez d'abord les notebooks.")
         st.stop()
 
-    # Inverse label mapping
+    # Inverse label mapping (label_mapping_hog is {int: str})
     if label_mapping:
-        inv_mapping = {v: k for k, v in label_mapping.items()}
+        # label_mapping_hog format: {0: 'COVID', 1: 'Lung_Opacity', ...}
+        if isinstance(list(label_mapping.keys())[0], int):
+            inv_mapping = label_mapping
+        else:
+            inv_mapping = {v: k for k, v in label_mapping.items()}
     else:
-        inv_mapping = {0: 'Normal', 1: 'Lung_Opacity', 2: 'COVID', 3: 'Viral Pneumonia'}
+        inv_mapping = {0: 'COVID', 1: 'Lung_Opacity', 2: 'Normal', 3: 'Viral Pneumonia'}
 
     # Model selection
-    model_name = st.selectbox("Choisir le modèle", sorted(models.keys()))
+    model_name = st.selectbox("Choisir le modele", sorted(models.keys()))
     model = models[model_name]
 
     st.markdown("---")
 
-    # Upload or sample
     tab1, tab2 = st.tabs(["Uploader une image", "Image aleatoire du dataset"])
 
     with tab1:
@@ -373,7 +366,7 @@ elif page == "Prédiction":
             predict_image = image
 
     with tab2:
-        if st.button("Tirer une image aléatoire"):
+        if st.button("Tirer une image aleatoire"):
             cls = np.random.choice(CLASSES)
             img_dir = DATA_DIR / cls / "images"
             if img_dir.exists():
@@ -395,25 +388,24 @@ elif page == "Prédiction":
             st.image(predict_image, caption="Radiographie", use_container_width=True)
 
         with col2:
-            features_df = extract_features(predict_image)
-
-            st.markdown("**Features extraites :**")
-            st.dataframe(features_df.T.rename(columns={0: 'Valeur'}).style.format("{:.2f}"))
+            # Extract HOG features
+            hog_features = extract_hog_features(predict_image)
+            X_pred = hog_features.reshape(1, -1)
 
             # Predict
-            prediction = model.predict(features_df)[0]
+            prediction = model.predict(X_pred)[0]
             predicted_class = inv_mapping.get(prediction, str(prediction))
 
             if hasattr(model, 'predict_proba'):
-                probas = model.predict_proba(features_df)[0]
-                st.markdown("**Probabilités par classe :**")
+                probas = model.predict_proba(X_pred)[0]
+                st.markdown("**Probabilites par classe :**")
 
                 fig, ax = plt.subplots(figsize=(6, 3))
                 classes_sorted = [inv_mapping.get(i, str(i)) for i in range(len(probas))]
                 colors = [CLASS_COLORS.get(c, '#95a5a6') for c in classes_sorted]
                 bars = ax.barh(classes_sorted, probas, color=colors, edgecolor='white')
                 ax.set_xlim(0, 1)
-                ax.set_xlabel("Probabilité")
+                ax.set_xlabel("Probabilite")
                 for bar, p in zip(bars, probas):
                     ax.text(bar.get_width() + 0.02, bar.get_y() + bar.get_height() / 2,
                             f'{p:.1%}', va='center', fontweight='bold')
