@@ -1,0 +1,8 @@
+{
+  "model": "resnet50_masked",
+  "gradcam_in_lungs": 0.5756365656852722,
+  "lung_area_reference": 0.2711339294910431,
+  "n_gradcam_cases": 12,
+  "class_analyzed": "COVID",
+  "interpretation": "Plus le score Grad-CAM dans les poumons depasse la surface pulmonaire moyenne, plus l'attention est compatible avec une decision fondee sur les champs pulmonaires."
+}

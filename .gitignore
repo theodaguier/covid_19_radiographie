@@ -167,3 +167,13 @@ data/COVID-19_Radiography_Dataset.zip
 data/COVID-19_Radiography_Dataset/
 *.pkl
 .DS_Store
+
+# Poids de modeles (volumineux) - on versionne les metriques/figures, pas les poids
+models/transfer/
+models/transfer/*.keras
+
+# Documents internes - ne jamais pousser sur GitHub
+reports/FEUILLE_DE_ROUTE.md
+reports/GUIDE_COMPREHENSION.md
+reports/METRIQUES_EXPLIQUEES_PERSONNEL.md
+reports/DEEP_LEARNING_EXPLIQUE_PERSONNEL.md

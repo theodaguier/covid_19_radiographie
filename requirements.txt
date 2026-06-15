@@ -9,3 +9,9 @@ Pillow
 scipy
 joblib
 tabulate
+tensorflow
+keras
+opencv-python-headless
+shap
+# GPU Apple Silicon (optionnel, en local) : decommentez si vous etes sur Mac M1/M2/M3
+# tensorflow-metal
